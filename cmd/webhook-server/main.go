@@ -38,6 +38,49 @@ var (
 	podResource = metav1.GroupVersionResource{Version: "v1", Resource: "pods"}
 )
 
+// applySideCar is designed as a basic way to add a sidecar container to a pod. In our case it will just inject a busybox
+// container but common use cases would be to create a service mesh proxy or a logging agent.
+func applySideCar(req *admission.AdmissionRequest) ([]patchOperation, error) {
+    // This handler should only get called on Pod objects as per the MutatingWebhookConfiguration in the YAML file.
+    // However, if (for whatever reason) this gets invoked on an object of a different kind, issue a log message but
+    // let the object request pass through otherwise.
+    if req.Resource != podResource {
+        log.Printf("expect resource to be %s", podResource)
+        return nil, nil
+    }
+
+    // Parse the Pod object.
+    raw := req.Object.Raw
+    pod := corev1.Pod{}
+    if _, _, err := universalDeserializer.Decode(raw, nil, &pod); err != nil {
+        return nil, fmt.Errorf("could not deserialize pod object: %v", err)
+    }
+
+    sidecarContainer = corev1.Container{
+        Name:  "busybox",
+        Image: "busybox",
+        Ports: []corev1.ContainerPort{
+            Name: "SSL",
+            ContainerPort: 443,
+            Protocol: "TCP",
+        }
+    }
+
+    //Get the current containers in the pod
+    containers := pod.Spec.Containers
+
+    // Create patch operations to add a sidecar container.
+    patches := []patchOperation{
+        {
+            Op:    "replace",
+            Path: "/spec/containers/"
+            Value: containers.append(sidecarContainer),
+        }
+    }
+
+    return patches, nil
+ 
+
 // applySecurityDefaults implements the logic of our example admission controller webhook. For every pod that is created
 // (outside of Kubernetes namespaces), it first checks if `runAsNonRoot` is set. If it is not, it is set to a default
 // value of `false`. Furthermore, if `runAsUser` is not set (and `runAsNonRoot` was not initially set), it defaults
@@ -102,7 +145,8 @@ func main() {
 	keyPath := filepath.Join(tlsDir, tlsKeyFile)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mutate", admitFuncHandler(applySecurityDefaults))
+	//mux.Handle("/mutate", admitFuncHandler(applySecurityDefaults))
+	mux.Handle("/mutate", admitFuncHandler(applySideCar))
 	server := &http.Server{
 		// We listen on port 8443 such that we do not need root privileges or extra capabilities for this server.
 		// The Service object will take care of mapping this port to the HTTPS port 443.
