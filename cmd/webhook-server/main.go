@@ -56,7 +56,15 @@ func applySideCar(req *admission.AdmissionRequest) ([]patchOperation, error) {
         return nil, fmt.Errorf("could not deserialize pod object: %v", err)
     }
 
-    sidecarContainer = corev1.Container{
+    sshCredentials = corev1.SecretEnvSource{
+	    Optional: false,
+	    {
+		Name: "ssh-credentials"    
+	    }
+	}
+	    
+
+    /*sidecarContainer = corev1.Container{
         Name:  "busybox",
         Image: "busybox",
         Ports: []corev1.ContainerPort{
@@ -64,18 +72,23 @@ func applySideCar(req *admission.AdmissionRequest) ([]patchOperation, error) {
             ContainerPort: 443,
             Protocol: "TCP",
         }
-    }
+    }*/
 
     //Get the current containers in the pod
-    containers := pod.Spec.Containers
+    env := pod.Spec.Containers.EnvFrom
 
     // Create patch operations to add a sidecar container.
     patches := []patchOperation{
-        {
+	    {
+		    Op: "add",
+		    Path: "/spec/containers/envFrom/"
+		    Value: env.append(sshCredentials)
+		    }
+        /*{
             Op:    "replace",
             Path: "/spec/containers/"
             Value: containers.append(sidecarContainer),
-        }
+        }*/
     }
 
     return patches, nil
