@@ -24,7 +24,7 @@ import (
 	"log"
 	"net/http"
 
-	admission "k8s.io/api/admission/v1beta1"
+	admission "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -153,6 +153,7 @@ func serveAdmitFunc(w http.ResponseWriter, r *http.Request, admit admitFunc) {
 		_, writeErr = w.Write([]byte(err.Error()))
 	} else {
 		log.Print("Webhook request handled successfully")
+		log.Print("response: %v", string(bytes))
 		_, writeErr = w.Write(bytes)
 	}
 

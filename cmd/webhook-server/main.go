@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"path/filepath"
 
-	admission "k8s.io/api/admission/v1beta1"
+	admission "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -41,58 +41,65 @@ var (
 // applySideCar is designed as a basic way to add a sidecar container to a pod. In our case it will just inject a busybox
 // container but common use cases would be to create a service mesh proxy or a logging agent.
 func applySideCar(req *admission.AdmissionRequest) ([]patchOperation, error) {
-    // This handler should only get called on Pod objects as per the MutatingWebhookConfiguration in the YAML file.
-    // However, if (for whatever reason) this gets invoked on an object of a different kind, issue a log message but
-    // let the object request pass through otherwise.
-    if req.Resource != podResource {
-        log.Printf("expect resource to be %s", podResource)
+	// This handler should only get called on Pod objects as per the MutatingWebhookConfiguration in the YAML file.
+	// However, if (for whatever reason) this gets invoked on an object of a different kind, issue a log message but
+	// let the object request pass through otherwise.
+	if req.Resource != podResource {
+		log.Printf("expect resource to be %s", podResource)
+		return nil, nil
+	}
+
+	// Parse the Pod object.
+	raw := req.Object.Raw
+	pod := corev1.Pod{}
+	if _, _, err := universalDeserializer.Decode(raw, nil, &pod); err != nil {
+		return nil, fmt.Errorf("could not deserialize pod object: %v", err)
+	}
+    //ignore pod changes in the kube-system namespace
+    if pod.ObjectMeta.Namespace == "kube-system" {
         return nil, nil
     }
 
-    // Parse the Pod object.
-    raw := req.Object.Raw
-    pod := corev1.Pod{}
-    if _, _, err := universalDeserializer.Decode(raw, nil, &pod); err != nil {
-        return nil, fmt.Errorf("could not deserialize pod object: %v", err)
-    }
-
-    sshCredentials = corev1.SecretEnvSource{
-	    Optional: false,
-	    {
-		Name: "ssh-credentials"    
-	    }
+	sshCredentials := corev1.SecretEnvSource{
+		LocalObjectReference: corev1.LocalObjectReference{
+			Name: "ssh-credentials",
+		},
 	}
-	    
 
-    /*sidecarContainer = corev1.Container{
-        Name:  "busybox",
-        Image: "busybox",
-        Ports: []corev1.ContainerPort{
-            Name: "SSL",
-            ContainerPort: 443,
-            Protocol: "TCP",
-        }
-    }*/
+	/*sidecarContainer = corev1.Container{
+	    Name:  "busybox",
+	    Image: "busybox",
+	    Ports: []corev1.ContainerPort{
+	        Name: "SSL",
+	        ContainerPort: 443,
+	        Protocol: "TCP",
+	    }
+	}*/
+	patches := []patchOperation{}
 
-    //Get the current containers in the pod
-    env := pod.Spec.Containers.EnvFrom
+    
+	//inject secret into all containers
+	for i, _ := range pod.Spec.Containers {
 
-    // Create patch operations to add a sidecar container.
-    patches := []patchOperation{
-	    {
-		    Op: "add",
-		    Path: "/spec/containers/envFrom/"
-		    Value: env.append(sshCredentials)
-		    }
-        /*{
-            Op:    "replace",
-            Path: "/spec/containers/"
-            Value: containers.append(sidecarContainer),
-        }*/
+    //check to see if podspec is using envFrom
+    if pod.Spec.Containers[i].EnvFrom == nil {
+        patches = append(patches, patchOperation{
+            Op:   "add",
+            Path: fmt.Sprintf("/spec/containers/%d/envFrom", i),
+            Value: []corev1.EnvFromSource{},
+        })
     }
-
-    return patches, nil
- 
+		//Append the secret to the envFrom for the container
+		patches = append(patches, patchOperation{
+			Op:   "add",
+			Path: fmt.Sprintf("/spec/containers/%d/envFrom/-", i),
+			Value: corev1.EnvFromSource{
+				SecretRef: &sshCredentials,
+			},
+		})
+	}
+	return patches, nil
+}
 
 // applySecurityDefaults implements the logic of our example admission controller webhook. For every pod that is created
 // (outside of Kubernetes namespaces), it first checks if `runAsNonRoot` is set. If it is not, it is set to a default

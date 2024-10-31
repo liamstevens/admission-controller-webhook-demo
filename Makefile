@@ -16,14 +16,14 @@
 
 .DEFAULT_GOAL := docker-image
 
-IMAGE ?= stackrox/admission-controller-webhook-demo:latest
+IMAGE ?= 527100417633.dkr.ecr.us-west-2.amazonaws.com/lstevens-buildkite-eks:latest 
 
 image/webhook-server: $(shell find . -name '*.go')
-	CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o $@ ./cmd/webhook-server
+	CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build -ldflags="-s -w" -o $@ ./cmd/webhook-server
 
 .PHONY: docker-image
 docker-image: image/webhook-server
-	docker build -t $(IMAGE) image/
+	docker build -t $(IMAGE)  --platform="linux/amd64" image/
 
 .PHONY: push-image
 push-image: docker-image
